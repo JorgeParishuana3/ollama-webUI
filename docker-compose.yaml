@@ -1,0 +1,20 @@
+
+services:
+  frontend:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+
+    container_name: ollama-web
+
+    restart: unless-stopped
+
+    ports:
+      - "4003:80"
+
+    networks:
+      - ollama-network
+
+networks:
+  ollama-network:
+    external: true

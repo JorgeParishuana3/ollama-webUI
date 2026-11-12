@@ -1,122 +1,131 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import { useEffect, useState } from "react";
+import Chat from "./components/Chat";
+import ModelSelector from "./components/ModelSelector";
+import ThemeToggle from "./components/ThemeToggle";
+import { checkConnection, getModels } from "./services/ollama";
+import type { OllamaModel } from "./types/ollama";
+import "./App.css";
 
-function App() {
-  const [count, setCount] = useState(0)
+type Theme = "light" | "dark";
 
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+function getInitialTheme(): Theme {
+  const savedTheme = localStorage.getItem("ollama-theme");
 
-      <div className="ticks"></div>
+  if (savedTheme === "light" || savedTheme === "dark") {
+    return savedTheme;
+  }
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
 }
 
-export default App
+function App() {
+  const [theme, setTheme] = useState<Theme>(getInitialTheme);
+
+  const [models, setModels] = useState<OllamaModel[]>([]);
+  const [selectedModel, setSelectedModel] = useState("");
+  const [connected, setConnected] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("ollama-theme", theme);
+  }, [theme]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function initialize() {
+      setLoading(true);
+
+      try {
+        const online = await checkConnection(controller.signal);
+
+        if (controller.signal.aborted) return;
+
+        setConnected(online);
+
+        if (online) {
+          const result = await getModels(controller.signal);
+
+          if (controller.signal.aborted) return;
+
+          setModels(result.models);
+          setSelectedModel(result.models[0]?.name ?? "");
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setConnected(false);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void initialize();
+
+    return () => controller.abort();
+  }, []);
+
+  function toggleTheme() {
+    setTheme((current) =>
+      current === "light" ? "dark" : "light"
+    );
+  }
+
+  return (
+    <div className="app">
+      <header className="header">
+        <div className="brand">
+          <div className="brand-icon">✦</div>
+          <h1>Ollama Web</h1>
+        </div>
+
+        <div className="header-controls">
+          <ModelSelector
+            models={models}
+            selectedModel={selectedModel}
+            onChange={setSelectedModel}
+            disabled={loading}
+          />
+
+          <ThemeToggle
+            theme={theme}
+            onToggle={toggleTheme}
+          />
+
+          <div className="connection-status">
+            <span
+              className={`status-dot ${
+                connected ? "online" : "offline"
+              }`}
+            />
+            <span>
+              {loading
+                ? "Conectando..."
+                : connected
+                  ? "Conectado"
+                  : "Sin conexión"}
+            </span>
+          </div>
+        </div>
+      </header>
+
+      <main className="main">
+        {!loading && !connected ? (
+          <div className="connection-error">
+            <h2>No se pudo conectar con Ollama</h2>
+            <p>Verifica que el servidor esté disponible.</p>
+          </div>
+        ) : (
+          <Chat key={selectedModel} model={selectedModel} />
+        )}
+      </main>
+    </div>
+  );
+}
+
+export default App;
