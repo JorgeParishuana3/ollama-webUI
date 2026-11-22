@@ -3,9 +3,10 @@ import type { ChatMessage } from "../types/ollama";
 
 interface Props {
     message: ChatMessage;
+    status?: string;
 }
 
-export default function Message({ message }: Props) {
+export default function Message({ message, status }: Props) {
 const isUser = message.role === "user";
 
     return (
@@ -14,6 +15,7 @@ const isUser = message.role === "user";
     >
         <div className="message-role">
         {isUser ? "Tú" : "Ollama"}
+        {status && ` · ${status}`}
         </div>
 
         <div className="message-content">

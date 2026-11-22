@@ -65,6 +65,7 @@ export async function streamChat(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let completed = false;
 
   function processLine(line: string) {
     if (!line.trim()) return;
@@ -78,6 +79,8 @@ export async function streamChat(
     if (chunk.message?.content) {
       onChunk(chunk.message.content);
     }
+
+    completed = chunk.done === true;
   }
 
   try {
@@ -93,6 +96,7 @@ export async function streamChat(
 
       for (const line of lines) {
         processLine(line);
+        if (completed) return;
       }
     }
 
@@ -101,7 +105,17 @@ export async function streamChat(
     if (buffer.trim()) {
       processLine(buffer);
     }
+
+    if (!completed) {
+      throw new Error("Ollama cerró la conexión antes de completar la respuesta.");
+    }
   } finally {
-    reader.releaseLock();
+    try {
+      await reader.cancel();
+    } catch {
+      // Conserva el error original si la conexión ya se cerró.
+    } finally {
+      reader.releaseLock();
+    }
   }
 }

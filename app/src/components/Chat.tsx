@@ -8,16 +8,22 @@ interface Props {
   model: string;
 }
 
+type IncompleteStatus = "Detenida" | "Interrumpida";
+
+type DisplayMessage = ChatMessage & {
+  status?: IncompleteStatus;
+};
+
 export default function Chat({ model }: Props) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState("");
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
+  const [incomplete, setIncomplete] = useState<IncompleteStatus | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
-  const messagesRef = useRef<ChatMessage[]>([]);
+  const messagesRef = useRef<DisplayMessage[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const generationRef = useRef(0);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({
@@ -26,62 +32,76 @@ export default function Chat({ model }: Props) {
   }, [messages]);
 
   useEffect(() => {
-    generationRef.current++;
-    abortRef.current?.abort();
-    abortRef.current = null;
-    messagesRef.current = [];
-    // Reinicia el chat al cambiar de modelo.
-    // La actualización se realiza en el siguiente ciclo.
     return () => {
-      generationRef.current++;
       abortRef.current?.abort();
+      abortRef.current = null;
     };
   }, [model]);
 
-  function updateMessages(next: ChatMessage[]) {
+  function updateMessages(next: DisplayMessage[]) {
     messagesRef.current = next;
     setMessages(next);
   }
 
   function newChat() {
-    generationRef.current++;
     abortRef.current?.abort();
     abortRef.current = null;
     updateMessages([]);
     setInput("");
     setError("");
+    setIncomplete(null);
     setGenerating(false);
   }
 
   function stopGeneration() {
-    generationRef.current++;
-    abortRef.current?.abort();
+    if (!abortRef.current) return;
+
+    abortRef.current.abort();
     abortRef.current = null;
+    finishIncomplete("Detenida");
     setGenerating(false);
   }
 
-  async function sendMessage() {
-    const content = input.trim();
+  function finishIncomplete(status: IncompleteStatus) {
+    const current = messagesRef.current;
+    const last = current[current.length - 1];
+    updateMessages(
+      last.content
+        ? [...current.slice(0, -1), { ...last, status }]
+        : current.slice(0, -1)
+    );
+    setIncomplete(status);
+  }
 
-    if (!content || !model || generating) return;
+  function sendMessage() {
+    const content = input.trim();
+    if (!content || !model || abortRef.current) return;
+
+    setInput("");
+    void generateReply([...messagesRef.current, { role: "user", content }]);
+  }
+
+  function retryMessage() {
+    const current = messagesRef.current;
+    const last = current[current.length - 1];
+    if (!incomplete || !last) return;
+
+    void generateReply(last.status ? current.slice(0, -1) : current);
+  }
+
+  async function generateReply(nextMessages: DisplayMessage[]) {
+    if (!model || abortRef.current) return;
 
     const controller = new AbortController();
-    const generationId = ++generationRef.current;
-
     abortRef.current = controller;
-
-    const nextMessages: ChatMessage[] = [
-      ...messagesRef.current,
-      { role: "user", content },
-    ];
 
     updateMessages([
       ...nextMessages,
       { role: "assistant", content: "" },
     ]);
 
-    setInput("");
     setError("");
+    setIncomplete(null);
     setGenerating(true);
 
     let answer = "";
@@ -89,9 +109,9 @@ export default function Chat({ model }: Props) {
     try {
       await streamChat(
         model,
-        nextMessages,
+        nextMessages.filter((message) => !message.status),
         (chunk) => {
-          if (generationRef.current !== generationId) return;
+          if (abortRef.current !== controller) return;
 
           answer += chunk;
 
@@ -102,11 +122,13 @@ export default function Chat({ model }: Props) {
         },
         controller.signal
       );
+
+      if (abortRef.current === controller && !answer) {
+        updateMessages(nextMessages);
+      }
     } catch (err) {
-      if (
-        generationRef.current === generationId &&
-        !controller.signal.aborted
-      ) {
+      if (abortRef.current === controller) {
+        finishIncomplete("Interrumpida");
         setError(
           err instanceof Error
             ? err.message
@@ -114,13 +136,9 @@ export default function Chat({ model }: Props) {
         );
       }
     } finally {
-      if (generationRef.current === generationId) {
+      if (abortRef.current === controller) {
         abortRef.current = null;
         setGenerating(false);
-
-        if (!answer) {
-          updateMessages(nextMessages);
-        }
       }
     }
   }
@@ -136,13 +154,21 @@ export default function Chat({ model }: Props) {
           </div>
         ) : (
           messages.map((message, index) => (
-            <Message key={index} message={message} />
+            <Message key={index} message={message} status={message.status} />
           ))
         )}
 
         {error && (
           <div className="error-message" role="alert">
             {error}
+          </div>
+        )}
+
+        {incomplete && (
+          <div role="status">
+            {incomplete === "Detenida"
+              ? "Generación detenida."
+              : "Respuesta interrumpida."}
           </div>
         )}
 
@@ -177,6 +203,16 @@ export default function Chat({ model }: Props) {
             >
               Nuevo chat
             </button>
+
+            {incomplete && (
+              <button
+                className="secondary-button"
+                onClick={retryMessage}
+                type="button"
+              >
+                Reintentar
+              </button>
+            )}
 
             {generating ? (
               <button
