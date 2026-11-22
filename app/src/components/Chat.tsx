@@ -9,6 +9,20 @@ interface Props {
 }
 
 type IncompleteStatus = "Detenida" | "Interrumpida";
+type GenerationPhase = "waiting" | "loading" | "streaming";
+
+const configuredTimeout = Number(import.meta.env.VITE_OLLAMA_FIRST_RESPONSE_TIMEOUT_MS);
+const firstResponseTimeout = Number.isSafeInteger(configuredTimeout) &&
+  configuredTimeout > 0 && configuredTimeout <= 2_147_483_647
+  ? configuredTimeout
+  : 180_000;
+const loadingHintDelay = 3_000;
+
+const generationLabels: Record<GenerationPhase, string> = {
+  waiting: "Esperando respuesta de Ollama…",
+  loading: "Ollama puede estar cargando el modelo. Esto puede tardar…",
+  streaming: "Generando respuesta…",
+};
 
 type DisplayMessage = ChatMessage & {
   status?: IncompleteStatus;
@@ -17,13 +31,14 @@ type DisplayMessage = ChatMessage & {
 export default function Chat({ model }: Props) {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState("");
-  const [generating, setGenerating] = useState(false);
+  const [phase, setPhase] = useState<GenerationPhase | null>(null);
   const [error, setError] = useState("");
   const [incomplete, setIncomplete] = useState<IncompleteStatus | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const messagesRef = useRef<DisplayMessage[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const generating = phase !== null;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({
@@ -50,7 +65,7 @@ export default function Chat({ model }: Props) {
     setInput("");
     setError("");
     setIncomplete(null);
-    setGenerating(false);
+    setPhase(null);
   }
 
   function stopGeneration() {
@@ -59,7 +74,7 @@ export default function Chat({ model }: Props) {
     abortRef.current.abort();
     abortRef.current = null;
     finishIncomplete("Detenida");
-    setGenerating(false);
+    setPhase(null);
   }
 
   function finishIncomplete(status: IncompleteStatus) {
@@ -102,9 +117,24 @@ export default function Chat({ model }: Props) {
 
     setError("");
     setIncomplete(null);
-    setGenerating(true);
+    setPhase("waiting");
 
     let answer = "";
+    let timedOut = false;
+    const loadingTimer = window.setTimeout(() => {
+      if (abortRef.current === controller) setPhase("loading");
+    }, loadingHintDelay);
+    const responseTimer = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, firstResponseTimeout);
+
+    function clearWaitingTimers() {
+      window.clearTimeout(loadingTimer);
+      window.clearTimeout(responseTimer);
+    }
+
+    controller.signal.addEventListener("abort", clearWaitingTimers, { once: true });
 
     try {
       await streamChat(
@@ -113,6 +143,10 @@ export default function Chat({ model }: Props) {
         (chunk) => {
           if (abortRef.current !== controller) return;
 
+          if (!answer) {
+            clearWaitingTimers();
+            setPhase("streaming");
+          }
           answer += chunk;
 
           updateMessages([
@@ -130,15 +164,21 @@ export default function Chat({ model }: Props) {
       if (abortRef.current === controller) {
         finishIncomplete("Interrumpida");
         setError(
-          err instanceof Error
-            ? err.message
-            : "Error al generar la respuesta"
+          timedOut
+            ? "Ollama tardó demasiado en enviar la primera respuesta. Es posible que el modelo aún se esté cargando. Pulsa Reintentar para enviar el mismo mensaje."
+            : answer
+              ? "Respuesta interrumpida. Pulsa Reintentar para volver a enviar tu mensaje."
+              : err instanceof Error
+                ? err.message
+                : "Error al generar la respuesta"
         );
       }
     } finally {
+      clearWaitingTimers();
+      controller.signal.removeEventListener("abort", clearWaitingTimers);
       if (abortRef.current === controller) {
         abortRef.current = null;
-        setGenerating(false);
+        setPhase(null);
       }
     }
   }
@@ -164,12 +204,8 @@ export default function Chat({ model }: Props) {
           </div>
         )}
 
-        {incomplete && (
-          <div role="status">
-            {incomplete === "Detenida"
-              ? "Generación detenida."
-              : "Respuesta interrumpida."}
-          </div>
+        {incomplete === "Detenida" && (
+          <div role="status">Generación detenida.</div>
         )}
 
         <div ref={bottomRef} />
@@ -234,6 +270,9 @@ export default function Chat({ model }: Props) {
             )}
           </div>
         </div>
+        <p className="generation-status" role="status">
+          {phase && generationLabels[phase]}
+        </p>
         <p className="footer-note">
           Conversación temporal · No se guarda historial
         </p>

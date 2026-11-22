@@ -52,10 +52,17 @@ export async function streamChat(
   });
 
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(
-      `Error de Ollama (${response.status}): ${detail}`
-    );
+    const { status } = response;
+    void response.body?.cancel().catch(() => {});
+
+    if (status === 502 || status === 503 || status === 504) {
+      throw new Error(
+        "Ollama no está disponible en este momento. Pulsa Reintentar para volver a enviar tu mensaje.",
+        { cause: status }
+      );
+    }
+
+    throw new Error(`Ollama rechazó la solicitud (HTTP ${status}).`);
   }
 
   if (!response.body) {

@@ -22,7 +22,13 @@ export default function ModelSelector({
       disabled={disabled || models.length === 0}
       aria-label="Seleccionar modelo"
     >
-      {models.length === 0 && (
+      {selectedModel && !models.some((model) => model.name === selectedModel) && (
+        <option value={selectedModel}>
+          {selectedModel} (no disponible)
+        </option>
+      )}
+
+      {!selectedModel && models.length === 0 && (
         <option value="">Sin modelos disponibles</option>
       )}
 

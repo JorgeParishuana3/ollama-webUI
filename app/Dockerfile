@@ -9,6 +9,7 @@ RUN npm ci
 
 COPY . .
 
+ARG VITE_OLLAMA_FIRST_RESPONSE_TIMEOUT_MS=180000
 RUN npm run build
 
 FROM nginx:alpine

@@ -4,6 +4,8 @@ services:
     build:
       context: ./app
       dockerfile: Dockerfile
+      args:
+        VITE_OLLAMA_FIRST_RESPONSE_TIMEOUT_MS: "${VITE_OLLAMA_FIRST_RESPONSE_TIMEOUT_MS:-180000}"
 
     container_name: ollama-web
 

@@ -7,6 +7,14 @@ import type { OllamaModel } from "./types/ollama";
 import "./App.css";
 
 type Theme = "light" | "dark";
+type ConnectionStatus = "loading" | "online" | "offline" | "models-error";
+
+const connectionLabels: Record<ConnectionStatus, string> = {
+  loading: "Buscando modelos…",
+  online: "Conectado",
+  offline: "Ollama no responde",
+  "models-error": "No se pudo cargar la lista de modelos",
+};
 
 function getInitialTheme(): Theme {
   const savedTheme = localStorage.getItem("ollama-theme");
@@ -25,8 +33,9 @@ function App() {
 
   const [models, setModels] = useState<OllamaModel[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
-  const [connected, setConnected] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [connection, setConnection] = useState<ConnectionStatus>("loading");
+  const [modelRefresh, setModelRefresh] = useState(0);
+  const loading = connection === "loading";
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -35,40 +44,40 @@ function App() {
 
   useEffect(() => {
     const controller = new AbortController();
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
 
-    async function initialize() {
-      setLoading(true);
+    async function loadModels() {
+      const online = await checkConnection(signal);
+      if (controller.signal.aborted) return;
+
+      if (!online) {
+        setConnection("offline");
+        return;
+      }
 
       try {
-        const online = await checkConnection(controller.signal);
-
+        const result = await getModels(signal);
         if (controller.signal.aborted) return;
 
-        setConnected(online);
-
-        if (online) {
-          const result = await getModels(controller.signal);
-
-          if (controller.signal.aborted) return;
-
-          setModels(result.models);
-          setSelectedModel(result.models[0]?.name ?? "");
-        }
+        setModels(result.models);
+        setSelectedModel((current) => current || result.models[0]?.name || "");
+        setConnection("online");
       } catch {
         if (!controller.signal.aborted) {
-          setConnected(false);
-        }
-      } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false);
+          setConnection("models-error");
         }
       }
     }
 
-    void initialize();
+    void loadModels();
 
     return () => controller.abort();
-  }, []);
+  }, [modelRefresh]);
+
+  function refreshModels() {
+    setConnection("loading");
+    setModelRefresh((current) => current + 1);
+  }
 
   function toggleTheme() {
     setTheme((current) =>
@@ -92,37 +101,39 @@ function App() {
             disabled={loading}
           />
 
+          <button
+            className="secondary-button"
+            onClick={refreshModels}
+            disabled={loading}
+            type="button"
+          >
+            Actualizar modelos
+          </button>
+
           <ThemeToggle
             theme={theme}
             onToggle={toggleTheme}
           />
 
-          <div className="connection-status">
+          <div className="connection-status" role="status">
             <span
               className={`status-dot ${
-                connected ? "online" : "offline"
+                connection === "online" || connection === "models-error"
+                  ? "online"
+                  : "offline"
               }`}
             />
             <span>
-              {loading
-                ? "Conectando..."
-                : connected
-                  ? "Conectado"
-                  : "Sin conexión"}
+              {connection === "online" && models.length === 0
+                ? "Sin modelos instalados"
+                : connectionLabels[connection]}
             </span>
           </div>
         </div>
       </header>
 
       <main className="main">
-        {!loading && !connected ? (
-          <div className="connection-error">
-            <h2>No se pudo conectar con Ollama</h2>
-            <p>Verifica que el servidor esté disponible.</p>
-          </div>
-        ) : (
-          <Chat key={selectedModel} model={selectedModel} />
-        )}
+        <Chat key={selectedModel} model={selectedModel} />
       </main>
     </div>
   );

@@ -92,6 +92,7 @@
 .header-controls {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 20px;
 }
 
@@ -500,6 +501,17 @@
    FOOTER NOTE
 ======================================== */
 
+.generation-status {
+  margin: 8px 0 0;
+  color: var(--text);
+  font-size: 13px;
+  text-align: center;
+}
+
+.generation-status:empty {
+  margin: 0;
+}
+
 .footer-note {
   margin: 12px 0 0;
 
@@ -609,6 +621,7 @@
   }
 
   .connection-status {
+    width: 100%;
     font-size: 11px;
   }
 
